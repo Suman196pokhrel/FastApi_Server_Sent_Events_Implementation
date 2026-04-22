@@ -23,6 +23,8 @@ async def create_task() -> TaskCreatedResponse:
     # The background work should update tasks[task_id].progress and tasks[task_id].status
     # as it runs so the SSE stream below can read those changes in real time.
 
+    # Call a background or asyncIO function that updates the values in this created task , mocking clelery workers
+
     return TaskCreatedResponse(task_id=task_id, message="Task accepted")
 
 
