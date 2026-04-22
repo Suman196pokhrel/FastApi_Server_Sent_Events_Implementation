@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SSE Task Progress</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f0f2f5;
+      color: #1a1a2e;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+    }
+
+    h1 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      margin-bottom: 0.25rem;
+      color: #1a1a2e;
+    }
+
+    .subtitle {
+      font-size: 0.875rem;
+      color: #6b7280;
+      margin-bottom: 2rem;
+    }
+
+    .card {
+      background: #fff;
+      border-radius: 1rem;
+      padding: 2rem;
+      width: 100%;
+      max-width: 480px;
+      box-shadow: 0 4px 24px rgba(0, 0, 0, 0.07);
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: #4f46e5;
+      color: #fff;
+      border: none;
+      border-radius: 0.625rem;
+      padding: 0.75rem 1.5rem;
+      font-size: 0.9375rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s, transform 0.1s;
+      width: 100%;
+      justify-content: center;
+    }
+
+    .btn:hover:not(:disabled) { background: #4338ca; }
+    .btn:active:not(:disabled) { transform: scale(0.98); }
+    .btn:disabled { background: #a5b4fc; cursor: not-allowed; }
+
+    .btn .spinner {
+      width: 1rem;
+      height: 1rem;
+      border: 2px solid rgba(255,255,255,0.4);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      display: none;
+    }
+
+    .btn.loading .spinner { display: block; }
+
+    /* ── Task list ── */
+    .task-list {
+      margin-top: 1.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+
+    .task-card {
+      border: 1px solid #e5e7eb;
+      border-radius: 0.75rem;
+      padding: 1rem 1.25rem;
+      animation: fadeSlideIn 0.25s ease;
+    }
+
+    @keyframes fadeSlideIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .task-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 0.75rem;
+    }
+
+    .task-id {
+      font-size: 0.75rem;
+      font-family: "SF Mono", "Fira Code", monospace;
+      color: #6b7280;
+    }
+
+    /* ── Status badge ── */
+    .badge {
+      font-size: 0.6875rem;
+      font-weight: 600;
+      padding: 0.2rem 0.6rem;
+      border-radius: 999px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .badge-pending  { background: #f3f4f6; color: #6b7280; }
+    .badge-running  { background: #eff6ff; color: #3b82f6; }
+    .badge-done     { background: #f0fdf4; color: #16a34a; }
+    .badge-failed   { background: #fef2f2; color: #dc2626; }
+
+    /* ── Progress bar ── */
+    .progress-wrap {
+      background: #f3f4f6;
+      border-radius: 999px;
+      height: 8px;
+      overflow: hidden;
+      margin-bottom: 0.5rem;
+    }
+
+    .progress-bar {
+      height: 100%;
+      border-radius: 999px;
+      background: linear-gradient(90deg, #4f46e5, #818cf8);
+      transition: width 0.35s ease;
+      width: 0%;
+    }
+
+    .progress-bar.done   { background: linear-gradient(90deg, #16a34a, #4ade80); }
+    .progress-bar.failed { background: linear-gradient(90deg, #dc2626, #f87171); }
+
+    .progress-footer {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.8125rem;
+      color: #6b7280;
+    }
+
+    .progress-footer .pct { font-weight: 600; color: #374151; }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+
+  <h1>SSE Task Progress</h1>
+  <p class="subtitle">FastAPI · Server-Sent Events demo</p>
+
+  <div class="card">
+    <button class="btn" id="createBtn" onclick="createTask()">
+      <span class="spinner"></span>
+      Create Task
+    </button>
+
+    <div class="task-list" id="taskList"></div>
+  </div>
+
+  <script>
+    const BASE_URL = "http://localhost:8000";
+
+    async function createTask() {
+      const btn = document.getElementById("createBtn");
+      btn.disabled = true;
+      btn.classList.add("loading");
+
+      try {
+        const res = await fetch(`${BASE_URL}/tasks`, { method: "POST" });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const { task_id } = await res.json();
+        addTaskCard(task_id);
+        openSSEStream(task_id);
+      } catch (err) {
+        alert(`Failed to create task: ${err.message}`);
+      } finally {
+        btn.disabled = false;
+        btn.classList.remove("loading");
+      }
+    }
+
+    function addTaskCard(taskId) {
+      const list = document.getElementById("taskList");
+
+      const card = document.createElement("div");
+      card.className = "task-card";
+      card.id = `task-${taskId}`;
+      card.innerHTML = `
+        <div class="task-header">
+          <span class="task-id">${taskId}</span>
+          <span class="badge badge-pending" id="badge-${taskId}">Pending</span>
+        </div>
+        <div class="progress-wrap">
+          <div class="progress-bar" id="bar-${taskId}"></div>
+        </div>
+        <div class="progress-footer">
+          <span id="msg-${taskId}">Waiting…</span>
+          <span class="pct" id="pct-${taskId}">0%</span>
+        </div>
+      `;
+
+      // newest task on top
+      list.prepend(card);
+    }
+
+    function openSSEStream(taskId) {
+      const es = new EventSource(`${BASE_URL}/tasks/${taskId}/progress`);
+
+      es.addEventListener("progress", (e) => {
+        const data = JSON.parse(e.data);
+        updateTaskCard(taskId, data);
+        if (data.status === "done" || data.status === "failed") es.close();
+      });
+
+      es.addEventListener("error", (e) => {
+        if (e.data) {
+          const data = JSON.parse(e.data);
+          updateTaskCard(taskId, data);
+        }
+        es.close();
+      });
+
+      // native onerror fires on connection drop
+      es.onerror = () => {
+        updateTaskCard(taskId, { status: "failed", progress: 0, message: "Connection lost" });
+        es.close();
+      };
+    }
+
+    function updateTaskCard(taskId, { status, progress, message }) {
+      const bar   = document.getElementById(`bar-${taskId}`);
+      const badge = document.getElementById(`badge-${taskId}`);
+      const msg   = document.getElementById(`msg-${taskId}`);
+      const pct   = document.getElementById(`pct-${taskId}`);
+
+      if (!bar) return;
+
+      bar.style.width = `${progress}%`;
+      bar.className   = `progress-bar ${status === "done" ? "done" : status === "failed" ? "failed" : ""}`;
+
+      badge.className   = `badge badge-${status}`;
+      badge.textContent = status.charAt(0).toUpperCase() + status.slice(1);
+
+      msg.textContent = message ?? "";
+      pct.textContent = `${progress}%`;
+    }
+  </script>
+</body>
+</html>
